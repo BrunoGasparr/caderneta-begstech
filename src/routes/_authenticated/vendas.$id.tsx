@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ArrowLeft, XCircle } from "lucide-react";
+import { ArrowLeft, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/vendas/$id")({
@@ -59,6 +59,19 @@ function VendaDetalhes() {
     onSuccess: () => {
       toast.success("Venda cancelada e estoque devolvido");
       qc.invalidateQueries();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const excluir = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.rpc("excluir_venda_admin", { p_venda_id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Venda excluída definitivamente");
+      qc.invalidateQueries();
+      navigate({ to: "/vendas" });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -132,18 +145,35 @@ function VendaDetalhes() {
         </CardContent>
       </Card>
 
-      {isAdmin && v.status !== "cancelada" && (
-        <Button
-          variant="destructive"
-          onClick={() => {
-            if (confirm("Cancelar esta venda? O estoque será devolvido.")) cancelar.mutate();
-          }}
-          disabled={cancelar.isPending}
-        >
-          <XCircle className="h-4 w-4 mr-2" /> Cancelar venda
-        </Button>
-      )}
-      <div>
+      <div className="flex flex-wrap gap-2">
+        {isAdmin && v.status !== "cancelada" && (
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (confirm("Cancelar esta venda? O estoque será devolvido.")) cancelar.mutate();
+            }}
+            disabled={cancelar.isPending || excluir.isPending}
+          >
+            <XCircle className="h-4 w-4 mr-2" /> Cancelar venda
+          </Button>
+        )}
+        {isAdmin && (
+          <Button
+            variant="destructive"
+            onClick={() => {
+              if (
+                confirm(
+                  "Excluir esta venda definitivamente? Se ela ainda não estiver cancelada, o sistema vai devolver o estoque e ajustar o cliente antes de apagar.",
+                )
+              ) {
+                excluir.mutate();
+              }
+            }}
+            disabled={cancelar.isPending || excluir.isPending}
+          >
+            <Trash2 className="h-4 w-4 mr-2" /> Excluir venda
+          </Button>
+        )}
         <Button variant="outline" onClick={() => navigate({ to: "/vendas" })}>
           Voltar
         </Button>

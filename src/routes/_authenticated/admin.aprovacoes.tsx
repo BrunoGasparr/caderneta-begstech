@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { CheckCircle2, XCircle, UserCheck } from "lucide-react";
+import { CheckCircle2, Trash2, XCircle, UserCheck, Users } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/admin/aprovacoes")({
@@ -45,6 +45,34 @@ function AprovacoesPage() {
     },
   });
 
+  const { data: vendedores = [], isLoading: loadingVendedores } = useQuery({
+    queryKey: ["vendedores-ativos-admin"],
+    queryFn: async () => {
+      const { data: roles, error: rolesError } = await supabase
+        .from("user_roles")
+        .select("user_id")
+        .eq("role", "vendedor");
+      if (rolesError) throw rolesError;
+
+      const ids = [...new Set((roles ?? []).map((r) => r.user_id))];
+      if (ids.length === 0) return [];
+
+      const { data: profiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, nome, email, criado_em")
+        .in("id", ids)
+        .order("nome", { ascending: true });
+      if (profilesError) throw profilesError;
+
+      return (profiles ?? []).map((p) => ({
+        user_id: p.id,
+        nome: p.nome,
+        email: p.email,
+        criado_em: p.criado_em,
+      }));
+    },
+  });
+
   const aprovar = useMutation({
     mutationFn: async (userId: string) => {
       const { error } = await supabase.rpc("aprovar_vendedor", { p_user_id: userId });
@@ -53,6 +81,7 @@ function AprovacoesPage() {
     onSuccess: () => {
       toast.success("Vendedor aprovado");
       qc.invalidateQueries({ queryKey: ["solicitacoes-vendedor"] });
+      qc.invalidateQueries({ queryKey: ["vendedores-ativos-admin"] });
       qc.invalidateQueries({ queryKey: ["aprovacoes-pendentes-count"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -69,6 +98,21 @@ function AprovacoesPage() {
     onSuccess: () => {
       toast.success("Solicitação rejeitada");
       qc.invalidateQueries({ queryKey: ["solicitacoes-vendedor"] });
+      qc.invalidateQueries({ queryKey: ["vendedores-ativos-admin"] });
+      qc.invalidateQueries({ queryKey: ["aprovacoes-pendentes-count"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const excluirVendedor = useMutation({
+    mutationFn: async (userId: string) => {
+      const { error } = await supabase.rpc("excluir_vendedor", { p_user_id: userId });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Acesso do vendedor removido");
+      qc.invalidateQueries({ queryKey: ["solicitacoes-vendedor"] });
+      qc.invalidateQueries({ queryKey: ["vendedores-ativos-admin"] });
       qc.invalidateQueries({ queryKey: ["aprovacoes-pendentes-count"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -92,6 +136,12 @@ function AprovacoesPage() {
           <CardContent className="p-4">
             <p className="text-xs uppercase text-muted-foreground">Pendentes</p>
             <p className="text-2xl font-bold mt-1">{pendentes}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xs uppercase text-muted-foreground">Vendedores ativos</p>
+            <p className="text-2xl font-bold mt-1">{vendedores.length}</p>
           </CardContent>
         </Card>
         <Card>
@@ -170,6 +220,67 @@ function AprovacoesPage() {
                         {s.analisado_em ? formatDateTime(s.analisado_em) : (s.observacao ?? "—")}
                       </span>
                     )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Users className="h-4 w-4" /> Vendedores ativos
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0 overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Nome</TableHead>
+                <TableHead>E-mail</TableHead>
+                <TableHead>Criado em</TableHead>
+                <TableHead className="text-right">Ações</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loadingVendedores && (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                    Carregando vendedores…
+                  </TableCell>
+                </TableRow>
+              )}
+              {!loadingVendedores && vendedores.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                    Nenhum vendedor ativo.
+                  </TableCell>
+                </TableRow>
+              )}
+              {vendedores.map((v) => (
+                <TableRow key={v.user_id}>
+                  <TableCell className="font-medium">{v.nome}</TableCell>
+                  <TableCell>{v.email}</TableCell>
+                  <TableCell>{formatDateTime(v.criado_em)}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => {
+                        if (
+                          confirm(
+                            `Remover o acesso de vendedor de ${v.nome}? As vendas antigas continuam no histórico.`,
+                          )
+                        ) {
+                          excluirVendedor.mutate(v.user_id);
+                        }
+                      }}
+                      disabled={excluirVendedor.isPending}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" /> Excluir vendedor
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}

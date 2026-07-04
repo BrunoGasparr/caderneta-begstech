@@ -369,6 +369,8 @@ export type Database = {
         };
         Returns: string;
       };
+      excluir_venda_admin: { Args: { p_venda_id: string }; Returns: undefined };
+      excluir_vendedor: { Args: { p_user_id: string }; Returns: undefined };
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"];

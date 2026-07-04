@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { formatBRL, formatDateTime } from "@/lib/format";
@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { CreditCard, DollarSign, Pencil } from "lucide-react";
+import { CreditCard, DollarSign, MessageCircle, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/fiado")({
@@ -49,6 +49,36 @@ function FiadoPage() {
       return data;
     },
   });
+
+  const clienteIds = useMemo(() => devedores.map((c) => c.id), [devedores]);
+
+  const { data: vendasFiadas = [] } = useQuery({
+    queryKey: ["fiado-vendas-em-aberto", clienteIds.join(",")],
+    enabled: clienteIds.length > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vendas")
+        .select("id, cliente_id, criado_em, valor_total, status, forma_pagamento")
+        .in("cliente_id", clienteIds)
+        .eq("forma_pagamento", "fiado")
+        .neq("status", "cancelada")
+        .order("criado_em", { ascending: true });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const diasDividaPorCliente = useMemo(() => {
+    const map: Record<string, number> = {};
+    const hoje = new Date();
+    for (const venda of vendasFiadas) {
+      if (!venda.cliente_id || map[venda.cliente_id] !== undefined) continue;
+      const criadaEm = new Date(venda.criado_em);
+      const diffMs = hoje.getTime() - criadaEm.getTime();
+      map[venda.cliente_id] = Math.max(0, Math.floor(diffMs / 86_400_000));
+    }
+    return map;
+  }, [vendasFiadas]);
 
   const { data: pagamentos = [] } = useQuery({
     queryKey: ["fiado-pagamentos"],
@@ -141,12 +171,20 @@ function FiadoPage() {
                 <TableHead>Limite</TableHead>
                 <TableHead>Disponível</TableHead>
                 <TableHead>Deve</TableHead>
+                <TableHead>Dias</TableHead>
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {devedores.map((c) => {
                 const disponivel = Number(c.limite_fiado) - Number(c.saldo_devedor);
+                const diasDivida = diasDividaPorCliente[c.id] ?? 0;
+                const whatsappUrl = buildCobrancaWhatsAppUrl({
+                  nome: c.nome,
+                  telefone: c.telefone,
+                  saldo: Number(c.saldo_devedor),
+                  dias: diasDivida,
+                });
                 return (
                   <TableRow key={c.id}>
                     <TableCell>
@@ -166,28 +204,53 @@ function FiadoPage() {
                     <TableCell className="font-semibold text-destructive">
                       {formatBRL(c.saldo_devedor)}
                     </TableCell>
+                    <TableCell>
+                      {diasDivida === 0 ? "Hoje" : `${diasDivida} dia${diasDivida > 1 ? "s" : ""}`}
+                    </TableCell>
                     <TableCell className="text-right">
-                      {isAdmin && (
-                        <div className="flex justify-end gap-2">
+                      <div className="flex justify-end gap-2 flex-wrap">
+                        {whatsappUrl ? (
+                          <Button size="sm" variant="secondary" asChild>
+                            <a href={whatsappUrl} target="_blank" rel="noreferrer">
+                              <MessageCircle className="h-4 w-4 mr-1" /> Cobrar WhatsApp
+                            </a>
+                          </Button>
+                        ) : (
                           <Button
                             size="sm"
-                            variant="outline"
-                            onClick={() => setOpenLimiteCliente(c.id)}
+                            variant="secondary"
+                            disabled
+                            title="Cliente sem telefone"
                           >
-                            <Pencil className="h-4 w-4 mr-1" /> Alterar limite
+                            <MessageCircle className="h-4 w-4 mr-1" /> Sem telefone
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => setOpenCliente(c.id)}>
-                            <DollarSign className="h-4 w-4 mr-1" /> Registrar pagamento
-                          </Button>
-                        </div>
-                      )}
+                        )}
+                        {isAdmin && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setOpenLimiteCliente(c.id)}
+                            >
+                              <Pencil className="h-4 w-4 mr-1" /> Alterar limite
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setOpenCliente(c.id)}
+                            >
+                              <DollarSign className="h-4 w-4 mr-1" /> Registrar pagamento
+                            </Button>
+                          </>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
               })}
               {devedores.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                     Nenhum cliente devendo. 🎉
                   </TableCell>
                 </TableRow>
@@ -334,6 +397,35 @@ function FiadoPage() {
       </Dialog>
     </div>
   );
+}
+
+function normalizeWhatsAppPhone(phone?: string | null) {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("55")) return digits;
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
+}
+
+function buildCobrancaWhatsAppUrl({
+  nome,
+  telefone,
+  saldo,
+  dias,
+}: {
+  nome: string;
+  telefone?: string | null;
+  saldo: number;
+  dias: number;
+}) {
+  const numero = normalizeWhatsAppPhone(telefone);
+  if (!numero) return "";
+
+  const textoDias = dias <= 0 ? "desde hoje" : `há ${dias} dia${dias > 1 ? "s" : ""}`;
+  const mensagem = `Senhor(a) ${nome}, você tem uma dívida de ${formatBRL(
+    saldo,
+  )} ${textoDias}. Por favor, entre em contato para regularizar.`;
+  return `https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}`;
 }
 
 export default FiadoPage;

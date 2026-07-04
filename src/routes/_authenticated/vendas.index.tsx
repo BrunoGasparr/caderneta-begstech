@@ -1,7 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { formatBRL, formatDateTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,13 +23,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/vendas/")({
   component: VendasPage,
 });
 
 function VendasPage() {
+  const { isAdmin } = useAuth();
+  const qc = useQueryClient();
   const [busca, setBusca] = useState("");
   const [status, setStatus] = useState<string>("todos");
   const [forma, setForma] = useState<string>("todos");
@@ -70,6 +74,20 @@ function VendasPage() {
     },
   });
   const perfilMap = useMemo(() => Object.fromEntries(perfis.map((p) => [p.id, p.nome])), [perfis]);
+
+  const excluir = useMutation({
+    mutationFn: async (vendaId: string) => {
+      const { error } = await supabase.rpc("excluir_venda_admin", { p_venda_id: vendaId });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Venda excluída definitivamente");
+      qc.invalidateQueries({ queryKey: ["vendas-lista"] });
+      qc.invalidateQueries({ queryKey: ["financeiro-admin-dados"] });
+      qc.invalidateQueries({ queryKey: ["fiado-devedores"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const filtradas = vendas.filter((v) => {
     if (status !== "todos" && v.status !== status) return false;
@@ -156,6 +174,7 @@ function VendasPage() {
                 <TableHead>Pagamento</TableHead>
                 <TableHead>Valor</TableHead>
                 <TableHead>Status</TableHead>
+                {isAdmin && <TableHead className="text-right">Ações</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -181,11 +200,36 @@ function VendasPage() {
                     )}
                     {v.status === "cancelada" && <Badge variant="destructive">Cancelada</Badge>}
                   </TableCell>
+                  {isAdmin && (
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => {
+                          if (
+                            confirm(
+                              "Excluir esta venda definitivamente? Se ela ainda não estiver cancelada, o sistema vai devolver o estoque e ajustar o cliente antes de apagar.",
+                            )
+                          ) {
+                            excluir.mutate(v.id);
+                          }
+                        }}
+                        disabled={excluir.isPending}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        <span className="sr-only">Excluir venda</span>
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
               {filtradas.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                  <TableCell
+                    colSpan={isAdmin ? 7 : 6}
+                    className="text-center py-8 text-muted-foreground"
+                  >
                     Nenhuma venda encontrada.
                   </TableCell>
                 </TableRow>

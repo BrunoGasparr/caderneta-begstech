@@ -76,3 +76,26 @@ Alterações:
 Depois de subir os arquivos, aplique a migration nova no SQL Editor do Supabase:
 
 `supabase/migrations/20260704130000_fix_financeiro_dashboard_rpc.sql`
+
+## Correção adicional — exclusões administrativas e cobrança por WhatsApp
+
+Arquivo novo:
+
+- `supabase/migrations/20260704140000_admin_delete_vendas_vendedores_whatsapp.sql`
+
+Alterações:
+
+- Administrador pode excluir vendas já feitas pela lista de vendas e pela tela de detalhes da venda.
+- A exclusão de venda usa RPC segura `excluir_venda_admin`.
+- Se a venda ainda não estiver cancelada, a RPC devolve o estoque, ajusta `qtd_compras` do cliente e reduz `saldo_devedor` quando for venda fiada antes de apagar.
+- Se a venda já estiver cancelada, a RPC apenas apaga o registro e os itens.
+- Administrador pode remover o acesso de vendedores em `/admin/aprovacoes`.
+- A remoção de vendedor usa RPC segura `excluir_vendedor`.
+- A remoção não apaga o usuário do Auth nem o `profile`, para preservar o histórico de vendas; ela remove o papel `vendedor` e bloqueia o acesso ao app.
+- A tela `/fiado` agora mostra botão `Cobrar WhatsApp` para clientes com saldo devedor e telefone cadastrado.
+- A tela `/clientes/$id` também mostra botão de cobrança por WhatsApp quando o cliente possui saldo devedor.
+- O link usa `wa.me` com mensagem pronta no formato: `Senhor(a) [nome], você tem uma dívida de R$ [valor] há [dias]...`.
+
+Depois de subir os arquivos, aplique também esta migration no SQL Editor do Supabase:
+
+`supabase/migrations/20260704140000_admin_delete_vendas_vendedores_whatsapp.sql`

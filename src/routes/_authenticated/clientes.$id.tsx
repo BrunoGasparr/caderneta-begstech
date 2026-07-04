@@ -17,7 +17,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Pencil, TrendingUp } from "lucide-react";
+import { ArrowLeft, MessageCircle, Pencil, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/clientes/$id")({
@@ -71,6 +71,24 @@ function ClienteDetalhes() {
   if (!data?.cliente) return <div>Carregando…</div>;
   const c = data.cliente;
   const disponivel = Number(c.limite_fiado) - Number(c.saldo_devedor);
+  const primeiraFiadaAberta = [...data.vendas]
+    .filter((v) => v.forma_pagamento === "fiado" && v.status !== "cancelada")
+    .sort((a, b) => new Date(a.criado_em).getTime() - new Date(b.criado_em).getTime())[0];
+  const diasDivida = primeiraFiadaAberta
+    ? Math.max(
+        0,
+        Math.floor((Date.now() - new Date(primeiraFiadaAberta.criado_em).getTime()) / 86_400_000),
+      )
+    : 0;
+  const whatsappUrl =
+    Number(c.saldo_devedor) > 0
+      ? buildCobrancaWhatsAppUrl({
+          nome: c.nome,
+          telefone: c.telefone,
+          saldo: Number(c.saldo_devedor),
+          dias: diasDivida,
+        })
+      : "";
 
   return (
     <div className="space-y-4">
@@ -101,8 +119,15 @@ function ClienteDetalhes() {
         <MiniCard label="Fiado disponível" value={formatBRL(disponivel)} />
       </div>
 
-      {isAdmin && (
-        <div>
+      <div className="flex flex-wrap gap-2">
+        {whatsappUrl && (
+          <Button variant="secondary" size="sm" asChild>
+            <a href={whatsappUrl} target="_blank" rel="noreferrer">
+              <MessageCircle className="h-4 w-4 mr-2" /> Cobrar pelo WhatsApp
+            </a>
+          </Button>
+        )}
+        {isAdmin && (
           <Dialog open={openLimite} onOpenChange={setOpenLimite}>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm">
@@ -142,8 +167,8 @@ function ClienteDetalhes() {
               </form>
             </DialogContent>
           </Dialog>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
@@ -209,6 +234,35 @@ function ClienteDetalhes() {
       </div>
     </div>
   );
+}
+
+function normalizeWhatsAppPhone(phone?: string | null) {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("55")) return digits;
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
+}
+
+function buildCobrancaWhatsAppUrl({
+  nome,
+  telefone,
+  saldo,
+  dias,
+}: {
+  nome: string;
+  telefone?: string | null;
+  saldo: number;
+  dias: number;
+}) {
+  const numero = normalizeWhatsAppPhone(telefone);
+  if (!numero) return "";
+
+  const textoDias = dias <= 0 ? "desde hoje" : `há ${dias} dia${dias > 1 ? "s" : ""}`;
+  const mensagem = `Senhor(a) ${nome}, você tem uma dívida de ${formatBRL(
+    saldo,
+  )} ${textoDias}. Por favor, entre em contato para regularizar.`;
+  return `https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}`;
 }
 
 function MiniCard({ label, value, tone }: { label: string; value: string; tone?: "warning" }) {
