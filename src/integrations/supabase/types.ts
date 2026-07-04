@@ -172,6 +172,7 @@ export type Database = {
           categoria: string | null;
           criado_em: string;
           estoque_minimo: number;
+          foto_url: string | null;
           fornecedor_id: string | null;
           id: string;
           nome: string;
@@ -187,6 +188,7 @@ export type Database = {
           categoria?: string | null;
           criado_em?: string;
           estoque_minimo?: number;
+          foto_url?: string | null;
           fornecedor_id?: string | null;
           id?: string;
           nome: string;
@@ -202,6 +204,7 @@ export type Database = {
           categoria?: string | null;
           criado_em?: string;
           estoque_minimo?: number;
+          foto_url?: string | null;
           fornecedor_id?: string | null;
           id?: string;
           nome?: string;

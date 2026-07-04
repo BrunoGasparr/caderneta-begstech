@@ -14,8 +14,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Trash2, Plus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Camera, Minus, Plus, Search, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
+import { ProductImage } from "@/components/product-image";
 
 type FormaPagamento = "dinheiro" | "pix" | "cartao" | "fiado";
 
@@ -25,6 +27,7 @@ interface Item {
   quantidade: number;
   valor_unitario: number;
   estoque: number;
+  foto_url?: string | null;
 }
 
 export const Route = createFileRoute("/_authenticated/vendas/nova")({
@@ -36,7 +39,7 @@ function NovaVenda() {
   const qc = useQueryClient();
   const [clienteId, setClienteId] = useState<string>("");
   const [forma, setForma] = useState<FormaPagamento>("dinheiro");
-  const [produtoSel, setProdutoSel] = useState<string>("");
+  const [busca, setBusca] = useState("");
   const [itens, setItens] = useState<Item[]>([]);
 
   const { data: produtos = [] } = useQuery({
@@ -44,7 +47,7 @@ function NovaVenda() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("produtos")
-        .select("id, nome, quantidade, valor_venda")
+        .select("id, nome, quantidade, valor_venda, estoque_minimo, foto_url")
         .gt("quantidade", 0)
         .order("nome");
       if (error) throw error;
@@ -65,6 +68,7 @@ function NovaVenda() {
   });
 
   const clienteSel = clientes.find((c) => c.id === clienteId);
+  const totalItens = itens.reduce((sum, item) => sum + item.quantidade, 0);
   const total = itens.reduce((s, i) => s + i.quantidade * i.valor_unitario, 0);
   const disponivel = clienteSel
     ? Number(clienteSel.limite_fiado) - Number(clienteSel.saldo_devedor)
@@ -82,37 +86,10 @@ function NovaVenda() {
     return { ok: true, msg: "" };
   }, [clienteSel, total, disponivel]);
 
-  function addProduto() {
-    if (!produtoSel) return;
-    if (itens.find((i) => i.produto_id === produtoSel)) {
-      toast.info("Produto já na lista, ajuste a quantidade.");
-      return;
-    }
-    const p = produtos.find((p) => p.id === produtoSel);
-    if (!p) return;
-    setItens((prev) => [
-      ...prev,
-      {
-        produto_id: p.id,
-        nome: p.nome,
-        quantidade: 1,
-        valor_unitario: Number(p.valor_venda),
-        estoque: p.quantidade,
-      },
-    ]);
-    setProdutoSel("");
-  }
-
-  function atualizarQtd(id: string, qtd: number) {
-    setItens((prev) =>
-      prev.map((i) =>
-        i.produto_id === id ? { ...i, quantidade: Math.max(1, Math.min(qtd, i.estoque)) } : i,
-      ),
-    );
-  }
-  function remover(id: string) {
-    setItens((prev) => prev.filter((i) => i.produto_id !== id));
-  }
+  const produtosFiltrados = useMemo(
+    () => produtos.filter((p) => p.nome.toLowerCase().includes(busca.toLowerCase().trim())),
+    [busca, produtos],
+  );
 
   const criar = useMutation({
     mutationFn: async () => {
@@ -132,86 +109,149 @@ function NovaVenda() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  function alterarQuantidade(produto: (typeof produtos)[number], delta: number) {
+    setItens((prev) => {
+      const atual = prev.find((item) => item.produto_id === produto.id);
+      const qtdAtual = atual?.quantidade ?? 0;
+      const novaQtd = Math.max(0, Math.min(qtdAtual + delta, produto.quantidade));
+
+      if (novaQtd === 0) {
+        return prev.filter((item) => item.produto_id !== produto.id);
+      }
+
+      if (atual) {
+        return prev.map((item) =>
+          item.produto_id === produto.id ? { ...item, quantidade: novaQtd } : item,
+        );
+      }
+
+      return [
+        ...prev,
+        {
+          produto_id: produto.id,
+          nome: produto.nome,
+          quantidade: 1,
+          valor_unitario: Number(produto.valor_venda),
+          estoque: produto.quantidade,
+          foto_url: produto.foto_url,
+        },
+      ];
+    });
+  }
+
+  function qtdDoProduto(produtoId: string) {
+    return itens.find((item) => item.produto_id === produtoId)?.quantidade ?? 0;
+  }
+
   function finalizar() {
     if (itens.length === 0) return toast.error("Adicione ao menos um produto");
     if (forma === "fiado" && !podeFiado.ok) return toast.error(podeFiado.msg);
-    if (forma !== "fiado" && !clienteId) {
-      // ok, venda paga sem cliente
-    }
     criar.mutate();
   }
 
   return (
-    <div className="space-y-4 max-w-4xl">
-      <h1 className="text-2xl font-bold">Nova venda</h1>
+    <div className="space-y-4 pb-28 lg:pb-4">
+      <div className="space-y-1">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+          Venda
+        </p>
+        <h1 className="text-2xl font-bold">Nova venda</h1>
+      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-base">Produtos</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex gap-2">
-              <Select value={produtoSel} onValueChange={setProdutoSel}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Escolher produto" />
-                </SelectTrigger>
-                <SelectContent>
-                  {produtos
-                    .filter((p) => !itens.find((i) => i.produto_id === p.id))
-                    .map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.nome} — {formatBRL(p.valor_venda)} ({p.quantidade} em estoque)
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              <Button onClick={addProduto} disabled={!produtoSel}>
-                <Plus className="h-4 w-4" />
-              </Button>
-            </div>
+      <div className="grid gap-4 xl:grid-cols-[1.4fr_0.9fr]">
+        <div className="space-y-4">
+          <Card className="rounded-3xl">
+            <CardContent className="p-4">
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={busca}
+                    onChange={(e) => setBusca(e.target.value)}
+                    placeholder="Buscar produto..."
+                    className="rounded-2xl pl-9"
+                  />
+                </div>
+                <Button type="button" variant="outline" size="icon" className="rounded-2xl">
+                  <Camera className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
-            {itens.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-4 text-center">
-                Nenhum produto adicionado.
-              </p>
-            ) : (
-              <ul className="divide-y">
-                {itens.map((i) => (
-                  <li key={i.produto_id} className="py-3 grid grid-cols-12 gap-2 items-center">
-                    <div className="col-span-5">
-                      <div className="font-medium">{i.nome}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatBRL(i.valor_unitario)} × un
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+            {produtosFiltrados.map((produto) => {
+              const quantidadeSelecionada = qtdDoProduto(produto.id);
+              const baixo = produto.quantidade <= produto.estoque_minimo;
+              return (
+                <Card key={produto.id} className="overflow-hidden rounded-3xl border shadow-sm">
+                  <CardContent className="p-4">
+                    <div className="flex gap-4">
+                      <div className="h-24 w-24 shrink-0 overflow-hidden rounded-2xl border bg-muted/40">
+                        <ProductImage src={produto.foto_url} alt={produto.nome} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="line-clamp-2 text-base font-semibold">{produto.nome}</h3>
+                            <p className="mt-1 text-lg font-bold text-green-600">
+                              {formatBRL(produto.valor_venda)}
+                            </p>
+                          </div>
+                          <div className="flex flex-col items-end gap-2">
+                            <Button
+                              type="button"
+                              size="icon"
+                              className="h-10 w-10 rounded-full"
+                              onClick={() => alterarQuantidade(produto, 1)}
+                              disabled={quantidadeSelecionada >= produto.quantidade}
+                            >
+                              <Plus className="h-4 w-4" />
+                            </Button>
+                            <span className="text-base font-semibold">{quantidadeSelecionada}</span>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="outline"
+                              className="h-9 w-9 rounded-full"
+                              onClick={() => alterarQuantidade(produto, -1)}
+                              disabled={quantidadeSelecionada === 0}
+                            >
+                              <Minus className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {produto.quantidade <= 0 ? (
+                            <Badge variant="destructive">Sem estoque</Badge>
+                          ) : baixo ? (
+                            <Badge variant="destructive">Baixo estoque</Badge>
+                          ) : (
+                            <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                              Em estoque
+                            </Badge>
+                          )}
+                          <Badge variant="secondary">{produto.quantidade} un</Badge>
+                        </div>
                       </div>
                     </div>
-                    <div className="col-span-3">
-                      <Input
-                        type="number"
-                        min={1}
-                        max={i.estoque}
-                        value={i.quantidade}
-                        onChange={(e) => atualizarQtd(i.produto_id, Number(e.target.value))}
-                      />
-                    </div>
-                    <div className="col-span-3 text-right font-medium">
-                      {formatBRL(i.quantidade * i.valor_unitario)}
-                    </div>
-                    <div className="col-span-1 text-right">
-                      <Button variant="ghost" size="icon" onClick={() => remover(i.produto_id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+                  </CardContent>
+                </Card>
+              );
+            })}
+            {produtosFiltrados.length === 0 && (
+              <Card className="rounded-3xl">
+                <CardContent className="p-10 text-center text-sm text-muted-foreground">
+                  Nenhum produto encontrado.
+                </CardContent>
+              </Card>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
-        <Card>
+        <Card className="h-fit rounded-3xl lg:sticky lg:top-4">
           <CardHeader>
-            <CardTitle className="text-base">Resumo</CardTitle>
+            <CardTitle className="text-base">Resumo da venda</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -219,7 +259,7 @@ function NovaVenda() {
                 Cliente {forma === "fiado" && <span className="text-destructive">*</span>}
               </Label>
               <Select value={clienteId} onValueChange={setClienteId}>
-                <SelectTrigger>
+                <SelectTrigger className="rounded-2xl">
                   <SelectValue placeholder="Sem cadastro" />
                 </SelectTrigger>
                 <SelectContent>
@@ -240,7 +280,7 @@ function NovaVenda() {
             <div className="space-y-2">
               <Label>Forma de pagamento</Label>
               <Select value={forma} onValueChange={(v) => setForma(v as FormaPagamento)}>
-                <SelectTrigger>
+                <SelectTrigger className="rounded-2xl">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -255,18 +295,77 @@ function NovaVenda() {
               )}
             </div>
 
-            <div className="border-t pt-3">
-              <div className="flex items-center justify-between">
+            <div className="space-y-3 rounded-2xl border p-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Itens</span>
+                <span className="font-semibold">{totalItens}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Produtos diferentes</span>
+                <span className="font-semibold">{itens.length}</span>
+              </div>
+              <div className="flex items-center justify-between border-t pt-3">
                 <span className="text-sm text-muted-foreground">Total</span>
-                <span className="text-2xl font-bold">{formatBRL(total)}</span>
+                <span className="text-2xl font-bold text-green-600">{formatBRL(total)}</span>
               </div>
             </div>
 
-            <Button size="lg" className="w-full" onClick={finalizar} disabled={criar.isPending}>
+            {itens.length > 0 && (
+              <div className="space-y-2 rounded-2xl border p-3">
+                <p className="text-sm font-medium">Itens selecionados</p>
+                <ul className="space-y-2">
+                  {itens.map((item) => (
+                    <li
+                      key={item.produto_id}
+                      className="flex items-center justify-between gap-3 text-sm"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium">{item.nome}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {item.quantidade} × {formatBRL(item.valor_unitario)}
+                        </p>
+                      </div>
+                      <span className="font-semibold">
+                        {formatBRL(item.quantidade * item.valor_unitario)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <Button
+              size="lg"
+              className="hidden w-full lg:flex"
+              onClick={finalizar}
+              disabled={criar.isPending}
+            >
               Finalizar venda
             </Button>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 backdrop-blur lg:hidden">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
+          <div className="flex items-center gap-3 rounded-2xl border px-3 py-2">
+            <ShoppingCart className="h-5 w-5" />
+            <div className="text-sm">
+              <div>
+                Itens <span className="font-semibold">{totalItens}</span>
+              </div>
+              <div className="font-semibold text-green-600">{formatBRL(total)}</div>
+            </div>
+          </div>
+          <Button
+            size="lg"
+            className="flex-1 rounded-2xl"
+            onClick={finalizar}
+            disabled={criar.isPending}
+          >
+            Finalizar venda
+          </Button>
+        </div>
       </div>
     </div>
   );

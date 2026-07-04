@@ -17,6 +17,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ArrowLeft, AlertTriangle, PackagePlus } from "lucide-react";
+import { ProductImage } from "@/components/product-image";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/estoque/$id")({
@@ -84,14 +85,35 @@ function ProdutoDetalhes() {
       >
         <ArrowLeft className="h-3 w-3" /> Estoque
       </Link>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold">{p.nome}</h1>
-          {baixo && (
-            <Badge variant="destructive" className="gap-1">
-              <AlertTriangle className="h-3 w-3" /> Estoque baixo
-            </Badge>
-          )}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-4">
+          <div className="h-24 w-24 overflow-hidden rounded-2xl border bg-muted/40">
+            <ProductImage src={p.foto_url} alt={p.nome} />
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold">{p.nome}</h1>
+              {baixo && (
+                <Badge variant="destructive" className="gap-1">
+                  <AlertTriangle className="h-3 w-3" /> Estoque baixo
+                </Badge>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              SKU: {p.sku ?? "-"} · Categoria: {p.categoria ?? "-"} · Fornecedor:{" "}
+              {p.fornecedores ? (
+                <Link
+                  to="/fornecedores/$id"
+                  params={{ id: p.fornecedores.id }}
+                  className="underline"
+                >
+                  {p.fornecedores.nome}
+                </Link>
+              ) : (
+                "—"
+              )}
+            </p>
+          </div>
         </div>
         {isAdmin && (
           <Dialog>
@@ -160,16 +182,6 @@ function ProdutoDetalhes() {
           </Dialog>
         )}
       </div>
-      <p className="text-sm text-muted-foreground">
-        SKU: {p.sku ?? "-"} · Categoria: {p.categoria ?? "-"} · Fornecedor:{" "}
-        {p.fornecedores ? (
-          <Link to="/fornecedores/$id" params={{ id: p.fornecedores.id }} className="underline">
-            {p.fornecedores.nome}
-          </Link>
-        ) : (
-          "—"
-        )}
-      </p>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Mini

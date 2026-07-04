@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { ChangeEvent, ReactNode, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { formatBRL, formatDate } from "@/lib/format";
@@ -25,28 +25,35 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { AlertTriangle, PackagePlus, Plus, Search, Trash2 } from "lucide-react";
+  AlertTriangle,
+  Camera,
+  ChevronRight,
+  PackagePlus,
+  Plus,
+  Search,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { toast } from "sonner";
+import { ProductImage } from "@/components/product-image";
+import { fileToDataUrl } from "@/lib/product-images";
 
 export const Route = createFileRoute("/_authenticated/estoque/")({
   component: EstoquePage,
 });
 
+type FilterKey = "todos" | "baixo" | "reposicao" | "sem";
+
 function EstoquePage() {
   const { isAdmin } = useAuth();
   const qc = useQueryClient();
   const [busca, setBusca] = useState("");
+  const [filtro, setFiltro] = useState<FilterKey>("todos");
   const [open, setOpen] = useState(false);
   const [openReceber, setOpenReceber] = useState(false);
   const [fornecedorId, setFornecedorId] = useState<string>("");
   const [produtoReceberId, setProdutoReceberId] = useState<string>("");
+  const [fotoPreview, setFotoPreview] = useState<string | null>(null);
 
   const { data: produtos = [] } = useQuery({
     queryKey: ["produtos"],
@@ -79,6 +86,7 @@ function EstoquePage() {
       qc.invalidateQueries({ queryKey: ["produtos"] });
       setOpen(false);
       setFornecedorId("");
+      setFotoPreview(null);
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -120,17 +128,39 @@ function EstoquePage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  async function handleFotoChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      setFotoPreview(await fileToDataUrl(file));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível carregar a foto");
+    }
+  }
+
   function abrirRecebimento(produtoId?: string) {
     setProdutoReceberId(produtoId ?? "");
     setOpenReceber(true);
   }
 
-  const hoje = new Date();
-  const filtrados = produtos.filter((p) =>
-    (p.nome + " " + (p.sku ?? "") + " " + (p.categoria ?? ""))
-      .toLowerCase()
-      .includes(busca.toLowerCase()),
-  );
+  const filtrados = useMemo(() => {
+    const hoje = new Date();
+    return produtos.filter((p) => {
+      const termoOk = (p.nome + " " + (p.sku ?? "") + " " + (p.categoria ?? ""))
+        .toLowerCase()
+        .includes(busca.toLowerCase());
+      if (!termoOk) return false;
+
+      const baixo = p.quantidade <= p.estoque_minimo;
+      const reporHoje = !!p.sugestao_novo_pedido && new Date(p.sugestao_novo_pedido) <= hoje;
+      const semEstoque = p.quantidade <= 0;
+
+      if (filtro === "baixo") return baixo && !semEstoque;
+      if (filtro === "reposicao") return reporHoje;
+      if (filtro === "sem") return semEstoque;
+      return true;
+    });
+  }, [busca, filtro, produtos]);
   const produtoReceber = produtos.find((p) => p.id === produtoReceberId);
 
   return (
@@ -138,14 +168,20 @@ function EstoquePage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Estoque</h1>
-          <p className="text-sm text-muted-foreground">{produtos.length} produto(s)</p>
+          <p className="text-sm text-muted-foreground">Catálogo visual de produtos</p>
         </div>
         {isAdmin && (
           <div className="flex flex-wrap gap-2">
             <Button size="lg" variant="outline" onClick={() => abrirRecebimento()}>
               <PackagePlus className="h-4 w-4 mr-2" /> Receber estoque
             </Button>
-            <Dialog open={open} onOpenChange={setOpen}>
+            <Dialog
+              open={open}
+              onOpenChange={(value) => {
+                setOpen(value);
+                if (!value) setFotoPreview(null);
+              }}
+            >
               <DialogTrigger asChild>
                 <Button size="lg">
                   <Plus className="h-4 w-4 mr-2" /> Novo produto
@@ -168,10 +204,50 @@ function EstoquePage() {
                       valor_custo: Number(f.get("valor_custo") ?? 0),
                       valor_venda: Number(f.get("valor_venda") ?? 0),
                       fornecedor_id: fornecedorId || null,
+                      foto_url: fotoPreview,
                     });
                   }}
-                  className="space-y-3"
+                  className="space-y-4"
                 >
+                  <div className="rounded-2xl border bg-muted/30 p-4">
+                    <div className="flex items-start gap-4">
+                      <div className="h-28 w-28 shrink-0 overflow-hidden rounded-2xl border bg-background">
+                        <ProductImage src={fotoPreview} alt="Prévia do produto" />
+                      </div>
+                      <div className="space-y-3">
+                        <div>
+                          <p className="font-medium">Foto do produto</p>
+                          <p className="text-sm text-muted-foreground">
+                            Tire uma foto ou faça upload para transformar o estoque em vitrine.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent">
+                            <Camera className="h-4 w-4" />
+                            Tirar foto
+                            <input
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              className="hidden"
+                              onChange={handleFotoChange}
+                            />
+                          </label>
+                          <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent">
+                            <Upload className="h-4 w-4" />
+                            Fazer upload
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={handleFotoChange}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="space-y-2">
                     <Label>Nome *</Label>
                     <Input name="nome" required />
@@ -324,107 +400,152 @@ function EstoquePage() {
         </DialogContent>
       </Dialog>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="relative max-w-sm">
-            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Buscar produto…"
-              className="pl-9"
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-            />
+      <Card className="border-0 shadow-none bg-transparent">
+        <CardHeader className="px-0 pb-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="relative md:max-w-md md:flex-1">
+              <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Buscar produto..."
+                className="pl-9 rounded-2xl"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <FilterButton active={filtro === "todos"} onClick={() => setFiltro("todos")}>
+                Todos
+              </FilterButton>
+              <FilterButton active={filtro === "baixo"} onClick={() => setFiltro("baixo")}>
+                Baixo estoque
+              </FilterButton>
+              <FilterButton active={filtro === "reposicao"} onClick={() => setFiltro("reposicao")}>
+                Reposição
+              </FilterButton>
+              <FilterButton active={filtro === "sem"} onClick={() => setFiltro("sem")}>
+                Sem estoque
+              </FilterButton>
+            </div>
           </div>
         </CardHeader>
-        <CardContent className="p-0 overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Produto</TableHead>
-                <TableHead>Categoria</TableHead>
-                <TableHead>Fornecedor</TableHead>
-                <TableHead>Estoque</TableHead>
-                <TableHead>Venda</TableHead>
-                <TableHead>Reposição</TableHead>
-                <TableHead></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+        <CardContent className="px-0">
+          {filtrados.length === 0 ? (
+            <div className="rounded-3xl border bg-card p-8 text-center text-muted-foreground">
+              Nenhum produto encontrado.
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {filtrados.map((p) => {
                 const baixo = p.quantidade <= p.estoque_minimo;
+                const semEstoque = p.quantidade <= 0;
                 const reporHoje =
-                  p.sugestao_novo_pedido && new Date(p.sugestao_novo_pedido) <= hoje;
+                  !!p.sugestao_novo_pedido && new Date(p.sugestao_novo_pedido) <= new Date();
+
                 return (
-                  <TableRow key={p.id} className={baixo ? "bg-destructive/5" : ""}>
-                    <TableCell>
-                      <Link
-                        to="/estoque/$id"
-                        params={{ id: p.id }}
-                        className="font-medium hover:underline"
-                      >
-                        {p.nome}
-                      </Link>
-                      <div className="text-xs text-muted-foreground">SKU {p.sku ?? "-"}</div>
-                    </TableCell>
-                    <TableCell>{p.categoria ?? "-"}</TableCell>
-                    <TableCell>{p.fornecedores?.nome ?? "-"}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span className={baixo ? "text-destructive font-semibold" : ""}>
-                          {p.quantidade}
-                        </span>
-                        {baixo && <AlertTriangle className="h-4 w-4 text-destructive" />}
+                  <Card key={p.id} className="overflow-hidden rounded-3xl border bg-card shadow-sm">
+                    <CardContent className="p-4">
+                      <div className="flex gap-4">
+                        <div className="h-24 w-24 shrink-0 overflow-hidden rounded-2xl border bg-muted/40">
+                          <ProductImage src={p.foto_url} alt={p.nome} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <Link
+                                to="/estoque/$id"
+                                params={{ id: p.id }}
+                                className="line-clamp-2 text-base font-semibold hover:underline"
+                              >
+                                {p.nome}
+                              </Link>
+                              <p className="mt-1 text-sm font-medium text-primary">
+                                {formatBRL(p.valor_venda)}
+                              </p>
+                            </div>
+                            <ChevronRight className="mt-1 h-4 w-4 text-muted-foreground" />
+                          </div>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            Estoque:{" "}
+                            <span className="font-medium text-foreground">{p.quantidade} un</span>
+                          </p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {semEstoque ? (
+                              <Badge variant="destructive">Sem estoque</Badge>
+                            ) : baixo ? (
+                              <Badge variant="destructive" className="gap-1">
+                                <AlertTriangle className="h-3 w-3" /> Baixo
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                                Ok
+                              </Badge>
+                            )}
+                            {reporHoje && (
+                              <Badge
+                                variant="outline"
+                                className="border-orange-300 text-orange-600"
+                              >
+                                Repor
+                              </Badge>
+                            )}
+                            {p.categoria && <Badge variant="secondary">{p.categoria}</Badge>}
+                          </div>
+                          {p.sugestao_novo_pedido && (
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              Próximo pedido: {formatDate(p.sugestao_novo_pedido)}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-xs text-muted-foreground">mín. {p.estoque_minimo}</div>
-                    </TableCell>
-                    <TableCell>{formatBRL(p.valor_venda)}</TableCell>
-                    <TableCell>
-                      {p.sugestao_novo_pedido ? (
-                        reporHoje ? (
-                          <Badge variant="destructive">{formatDate(p.sugestao_novo_pedido)}</Badge>
-                        ) : (
-                          <span className="text-sm">{formatDate(p.sugestao_novo_pedido)}</span>
-                        )
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
+
                       {isAdmin && (
-                        <div className="flex justify-end gap-1">
+                        <div className="mt-4 flex flex-wrap justify-end gap-2">
                           <Button
-                            variant="ghost"
-                            size="icon"
+                            variant="outline"
+                            size="sm"
                             onClick={() => abrirRecebimento(p.id)}
-                            title="Receber estoque"
                           >
-                            <PackagePlus className="h-4 w-4" />
+                            <PackagePlus className="mr-2 h-4 w-4" /> Receber
                           </Button>
                           <Button
-                            variant="ghost"
-                            size="icon"
+                            variant="outline"
+                            size="sm"
                             onClick={() => confirm(`Remover ${p.nome}?`) && remover.mutate(p.id)}
-                            title="Remover produto"
                           >
-                            <Trash2 className="h-4 w-4 text-destructive" />
+                            <Trash2 className="mr-2 h-4 w-4 text-destructive" />
+                            Remover
                           </Button>
                         </div>
                       )}
-                    </TableCell>
-                  </TableRow>
+                    </CardContent>
+                  </Card>
                 );
               })}
-              {filtrados.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                    Nenhum produto.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function FilterButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Button
+      type="button"
+      variant={active ? "default" : "outline"}
+      className="rounded-full"
+      onClick={onClick}
+    >
+      {children}
+    </Button>
   );
 }
